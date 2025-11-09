@@ -1,0 +1,34 @@
+# Build outputs
+build/
+target/
+*.class
+
+# Maven
+dependency-reduced-pom.xml
+
+# JAR files - ignore all except our final artifact
+*.jar
+!cookie-enum-num.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+libs/
+
+# Claude AI files
+.claude/
