@@ -90,7 +90,7 @@ public class CookieEnumTab {
             }
         };
         resultsTable = new JTable(tableModel);
-        resultsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        resultsTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
 
         // Enable table sorting - click column headers to sort
         resultsTable.setAutoCreateRowSorter(true);
@@ -266,8 +266,8 @@ public class CookieEnumTab {
             return;
         }
 
-        // Join cookie names with newlines
-        String cookieText = String.join("\n", cookieNames);
+        // Join cookie names with spaces
+        String cookieText = String.join(" ", cookieNames);
 
         // Copy to clipboard
         try {

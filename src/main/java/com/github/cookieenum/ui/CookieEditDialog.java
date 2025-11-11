@@ -24,7 +24,6 @@ public class CookieEditDialog extends JDialog {
     private JComboBox<PrivacyImpact> privacyCombo;
     private JCheckBox thirdPartyCheckbox;
     private JTextField expirationField;
-    private JSpinner confidenceSpinner;
 
     public CookieEditDialog(JFrame parent, CookieInfo cookie, MontoyaApi api) {
         super(parent, "Edit Cookie: " + cookie.getName(), true);
@@ -60,7 +59,8 @@ public class CookieEditDialog extends JDialog {
         gbc.weightx = 1.0;
         nameField = new JTextField(30);
         nameField.setEditable(false);
-        nameField.setBackground(Color.LIGHT_GRAY);
+        // Don't set background color - let Burp theme handle it
+        // nameField.setBackground(Color.LIGHT_GRAY);
         formPanel.add(nameField, gbc);
 
         // Vendor
@@ -143,21 +143,6 @@ public class CookieEditDialog extends JDialog {
         expirationField.setToolTipText("e.g., Session, 1 year, 30 days");
         formPanel.add(expirationField, gbc);
 
-        // Confidence Score
-        row++;
-        gbc.gridx = 0;
-        gbc.gridy = row;
-        gbc.weightx = 0;
-        formPanel.add(new JLabel("Confidence Score:"), gbc);
-
-        gbc.gridx = 1;
-        gbc.weightx = 1.0;
-        SpinnerNumberModel spinnerModel = new SpinnerNumberModel(0.0, 0.0, 1.0, 0.01);
-        confidenceSpinner = new JSpinner(spinnerModel);
-        JSpinner.NumberEditor editor = new JSpinner.NumberEditor(confidenceSpinner, "0.00");
-        confidenceSpinner.setEditor(editor);
-        formPanel.add(confidenceSpinner, gbc);
-
         add(formPanel, BorderLayout.CENTER);
 
         // Button panel
@@ -199,7 +184,6 @@ public class CookieEditDialog extends JDialog {
 
         thirdPartyCheckbox.setSelected(originalCookie.isThirdParty());
         expirationField.setText(originalCookie.getTypicalExpiration());
-        confidenceSpinner.setValue(originalCookie.getConfidenceScore());
     }
 
     public boolean isConfirmed() {
@@ -218,7 +202,7 @@ public class CookieEditDialog extends JDialog {
         updatedCookie.setPrivacyImpact((PrivacyImpact) privacyCombo.getSelectedItem());
         updatedCookie.setThirdParty(thirdPartyCheckbox.isSelected());
         updatedCookie.setTypicalExpiration(expirationField.getText());
-        updatedCookie.setConfidenceScore((Double) confidenceSpinner.getValue());
+        updatedCookie.setConfidenceScore(originalCookie.getConfidenceScore()); // Keep original confidence
         updatedCookie.setSource(originalCookie.getSource()); // Keep original source
 
         return updatedCookie;

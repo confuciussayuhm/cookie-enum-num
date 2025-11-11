@@ -227,6 +227,44 @@ public class CookieInfoSettingsPanel implements SettingsPanel {
 
         row++;
 
+        // Fetch Open Cookie Database button
+        gbc.gridx = 0;
+        gbc.gridy = row++;
+        gbc.gridwidth = 4;
+        JButton fetchOpenDbButton = new JButton("Fetch Open Cookie Database from GitHub");
+        fetchOpenDbButton.setToolTipText("Download and import the community-maintained Open Cookie Database");
+        fetchOpenDbButton.addActionListener(e -> {
+            fetchOpenDbButton.setEnabled(false);
+            fetchOpenDbButton.setText("Fetching...");
+
+            new Thread(() -> {
+                int imported = cookieService.fetchAndImportOpenCookieDatabase();
+
+                SwingUtilities.invokeLater(() -> {
+                    fetchOpenDbButton.setText("Fetch Open Cookie Database from GitHub");
+                    fetchOpenDbButton.setEnabled(true);
+
+                    if (imported > 0) {
+                        JOptionPane.showMessageDialog(mainPanel,
+                                "Successfully imported/updated " + imported + " cookies from Open Cookie Database.\n\n" +
+                                "This database is community-maintained and covers common cookies from\n" +
+                                "Google Analytics, advertising networks, and other popular services.",
+                                "Import Successful",
+                                JOptionPane.INFORMATION_MESSAGE);
+                        updateStats(); // Refresh stats
+                    } else {
+                        JOptionPane.showMessageDialog(mainPanel,
+                                "Failed to fetch Open Cookie Database.\nCheck the extension error log for details.",
+                                "Import Failed",
+                                JOptionPane.ERROR_MESSAGE);
+                    }
+                });
+            }).start();
+        });
+        mainPanel.add(fetchOpenDbButton, gbc);
+
+        row++;
+
         // ===== AI Provider =====
         addSectionHeader(mainPanel, gbc, row++, "AI Provider");
 
@@ -670,12 +708,22 @@ public class CookieInfoSettingsPanel implements SettingsPanel {
             // Add browser-like headers for better compatibility
             requestBuilder.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
             requestBuilder.header("Accept", "application/json, */*");
-            requestBuilder.header("Accept-Encoding", "gzip, deflate");
+            // Don't request gzip encoding - HttpClient doesn't auto-decompress with BodyHandlers.ofString()
+            // requestBuilder.header("Accept-Encoding", "gzip, deflate");
 
-            // Add Authorization header if API key is provided
+            // Add authentication headers based on provider
             String apiKey = apiKeyField.getText();
+            String provider = (String) providerCombo.getSelectedItem();
+
             if (apiKey != null && !apiKey.trim().isEmpty()) {
-                requestBuilder.header("Authorization", "Bearer " + apiKey);
+                if (provider != null && provider.contains("Anthropic")) {
+                    // Anthropic uses x-api-key header and requires anthropic-version
+                    requestBuilder.header("x-api-key", apiKey);
+                    requestBuilder.header("anthropic-version", "2023-06-01");
+                } else {
+                    // OpenAI and compatible providers use Authorization: Bearer
+                    requestBuilder.header("Authorization", "Bearer " + apiKey);
+                }
             }
 
             java.net.http.HttpRequest request = requestBuilder.build();
@@ -686,6 +734,7 @@ public class CookieInfoSettingsPanel implements SettingsPanel {
                 return parseModelsResponse(response.body());
             } else {
                 api.logging().logToError("Models endpoint returned status " + response.statusCode());
+                api.logging().logToError("Response body: " + response.body());
                 return null;
             }
         } catch (java.net.http.HttpTimeoutException e) {
@@ -705,46 +754,66 @@ public class CookieInfoSettingsPanel implements SettingsPanel {
         java.util.List<String> models = new java.util.ArrayList<>();
 
         try {
+            // Log the first 500 characters of response for debugging
+            String preview = responseBody.length() > 500 ?
+                responseBody.substring(0, 500) + "..." : responseBody;
+            api.logging().logToOutput("Models API response preview: " + preview);
+
             // Find the data array
             int dataStart = responseBody.indexOf("\"data\"");
             if (dataStart == -1) {
-                api.logging().logToError("Response format doesn't match OpenAI /v1/models");
+                api.logging().logToError("Response format doesn't match expected format (no 'data' field)");
+                api.logging().logToError("Full response: " + responseBody);
                 return models;
             }
 
             int arrayStart = responseBody.indexOf("[", dataStart);
-            int arrayEnd = responseBody.indexOf("]", arrayStart);
+            int arrayEnd = findMatchingBracket(responseBody, arrayStart);
             if (arrayStart == -1 || arrayEnd == -1) {
+                api.logging().logToError("Could not find data array boundaries");
                 return models;
             }
 
             String dataArray = responseBody.substring(arrayStart + 1, arrayEnd);
-            String[] parts = dataArray.split("\\{");
 
-            // Extract model IDs
-            for (String part : parts) {
-                if (part.trim().isEmpty()) continue;
+            // Extract model IDs using regex for better reliability
+            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"");
+            java.util.regex.Matcher matcher = pattern.matcher(dataArray);
 
-                int idStart = part.indexOf("\"id\"");
-                if (idStart == -1) continue;
-
-                int valueStart = part.indexOf("\"", idStart + 4);
-                if (valueStart == -1) continue;
-
-                int valueEnd = part.indexOf("\"", valueStart + 1);
-                if (valueEnd == -1) continue;
-
-                String modelId = part.substring(valueStart + 1, valueEnd);
+            while (matcher.find()) {
+                String modelId = matcher.group(1);
                 if (!modelId.isEmpty() && !models.contains(modelId)) {
                     models.add(modelId);
+                    api.logging().logToOutput("Found model: " + modelId);
                 }
+            }
+
+            if (models.isEmpty()) {
+                api.logging().logToError("No models found in data array");
+                api.logging().logToError("Data array content: " + dataArray.substring(0, Math.min(500, dataArray.length())));
             }
 
         } catch (Exception e) {
             api.logging().logToError("Failed to parse models response: " + e.getMessage());
+            e.printStackTrace();
         }
 
         return models;
+    }
+
+    private int findMatchingBracket(String str, int openBracketPos) {
+        if (openBracketPos == -1 || openBracketPos >= str.length()) return -1;
+
+        int depth = 0;
+        for (int i = openBracketPos; i < str.length(); i++) {
+            char c = str.charAt(i);
+            if (c == '[') depth++;
+            else if (c == ']') {
+                depth--;
+                if (depth == 0) return i;
+            }
+        }
+        return -1;
     }
 
     private void loadSettings() {

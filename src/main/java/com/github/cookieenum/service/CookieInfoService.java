@@ -4,8 +4,10 @@ import burp.api.montoya.MontoyaApi;
 import com.github.cookieenum.ai.AIException;
 import com.github.cookieenum.ai.AIProvider;
 import com.github.cookieenum.database.CookieDatabaseManager;
+import com.github.cookieenum.database.OpenCookieDatabase;
 import com.github.cookieenum.models.CookieInfo;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -25,10 +27,10 @@ public class CookieInfoService {
     }
 
     /**
-     * Get cookie info - cache first, then AI if needed
+     * Get cookie info - cache first (with wildcard matching), then AI if needed
      */
     public CookieInfo getCookieInfo(String name, String domain) {
-        // 1. Check database cache
+        // 1. Check database cache (exact match)
         Optional<CookieInfo> cached = getCookieInfoFromCache(name, domain);
         if (cached.isPresent()) {
             api.logging().logToOutput(String.format(
@@ -36,7 +38,29 @@ public class CookieInfoService {
             return cached.get();
         }
 
-        // 2. Query AI
+        // 2. Check wildcard patterns (e.g., _ga_ABC123 matches _ga)
+        Optional<String> matchedPattern = dbManager.matchCookiePattern(name);
+        if (matchedPattern.isPresent()) {
+            String baseName = matchedPattern.get();
+            Optional<CookieInfo> patternMatch = getCookieInfoFromCache(baseName, domain);
+            if (patternMatch.isPresent()) {
+                api.logging().logToOutput(String.format(
+                        "[PATTERN] Matched %s to %s pattern", name, baseName));
+                // Return a copy with the actual cookie name
+                CookieInfo info = patternMatch.get();
+                CookieInfo copy = new CookieInfo(name, info.getVendor(),
+                        info.getCategory(), info.getPurpose());
+                copy.setPrivacyImpact(info.getPrivacyImpact());
+                copy.setThirdParty(info.isThirdParty());
+                copy.setTypicalExpiration(info.getTypicalExpiration());
+                copy.setConfidenceScore(info.getConfidenceScore());
+                copy.setSource("pattern-match");
+                copy.setNotes("Matched pattern: " + baseName);
+                return copy;
+            }
+        }
+
+        // 3. Query AI
         try {
             CookieInfo fromAI = queryCookieFromAI(name, domain);
             return fromAI;
@@ -167,5 +191,33 @@ public class CookieInfoService {
         dbManager.deleteCookie(cookieName);
         api.logging().logToOutput(String.format(
                 "[DB] Deleted cookie: %s", cookieName));
+    }
+
+    /**
+     * Fetch and import the Open Cookie Database from GitHub
+     */
+    public int fetchAndImportOpenCookieDatabase() {
+        try {
+            api.logging().logToOutput("[Open Cookie DB] Starting fetch...");
+
+            OpenCookieDatabase openDb = new OpenCookieDatabase(api);
+            List<CookieInfo> cookies = openDb.fetchDatabase();
+
+            if (cookies.isEmpty()) {
+                api.logging().logToError("[Open Cookie DB] No cookies fetched");
+                return 0;
+            }
+
+            int imported = dbManager.importOpenCookieDatabase(cookies);
+            api.logging().logToOutput(String.format(
+                    "[Open Cookie DB] Successfully imported/updated %d cookies", imported));
+
+            return imported;
+
+        } catch (Exception e) {
+            api.logging().logToError("[Open Cookie DB] Failed to fetch: " + e.getMessage());
+            e.printStackTrace();
+            return 0;
+        }
     }
 }

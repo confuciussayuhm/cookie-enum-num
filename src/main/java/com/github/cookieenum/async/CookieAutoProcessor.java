@@ -152,11 +152,10 @@ public class CookieAutoProcessor implements HttpHandler {
             return;
         }
 
-        // Get response headers string
-        String headers = response.toString();
+        // Parse Set-Cookie headers from response headers only (not body)
+        String headersString = response.headers().toString();
+        String[] lines = headersString.split("\\r?\\n");
 
-        // Parse Set-Cookie headers manually
-        String[] lines = headers.split("\\r?\\n");
         for (String line : lines) {
             if (line.toLowerCase().startsWith("set-cookie:")) {
                 String setCookieValue = line.substring("set-cookie:".length()).trim();
@@ -165,6 +164,11 @@ public class CookieAutoProcessor implements HttpHandler {
                 int equalsIndex = setCookieValue.indexOf('=');
                 if (equalsIndex > 0) {
                     String cookieName = setCookieValue.substring(0, equalsIndex).trim();
+
+                    // Skip empty or invalid cookie names (spaces, semicolons, etc.)
+                    if (cookieName.isEmpty() || cookieName.contains(";") || cookieName.contains(" ")) {
+                        continue;
+                    }
 
                     CookieDiscoveryTask task = new CookieDiscoveryTask(
                             cookieName,
@@ -286,16 +290,23 @@ public class CookieAutoProcessor implements HttpHandler {
 
                         // Process Set-Cookie headers from response if available
                         if (entry.hasResponse()) {
-                            String responseStr = entry.response().toString();
-                            String[] lines = responseStr.split("\\r?\\n");
+                            // Parse Set-Cookie headers from response headers only (not body)
+                            String headersString = entry.response().headers().toString();
+                            String[] lines = headersString.split("\\r?\\n");
 
                             for (String line : lines) {
                                 if (line.toLowerCase().startsWith("set-cookie:")) {
                                     String setCookieValue = line.substring("set-cookie:".length()).trim();
 
+                                    // Extract cookie name from "name=value; attributes..."
                                     int equalsIndex = setCookieValue.indexOf('=');
                                     if (equalsIndex > 0) {
                                         String cookieName = setCookieValue.substring(0, equalsIndex).trim();
+
+                                        // Skip empty or invalid cookie names (spaces, semicolons, etc.)
+                                        if (cookieName.isEmpty() || cookieName.contains(";") || cookieName.contains(" ")) {
+                                            continue;
+                                        }
 
                                         CookieDiscoveryTask task = new CookieDiscoveryTask(
                                                 cookieName,

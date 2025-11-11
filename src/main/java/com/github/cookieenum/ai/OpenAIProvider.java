@@ -50,26 +50,38 @@ public class OpenAIProvider implements AIProvider {
                 .getString("cookiedb.openai.model");
         this.model = mdl != null ? mdl : "gpt-4";
 
+        // Load provider name from settings
+        String provider = api.persistence().preferences()
+                .getString("cookiedb.ai.provider");
+        this.providerName = provider != null ? provider : "OpenAI";
+
         String endpoint = api.persistence().preferences()
                 .getString("cookiedb.ai.endpoint");
         if (endpoint == null || endpoint.isEmpty()) {
             endpoint = DEFAULT_API_URL;
         } else {
-            // Ensure endpoint ends with /chat/completions
-            if (!endpoint.endsWith("/chat/completions")) {
-                if (endpoint.endsWith("/")) {
-                    endpoint += "chat/completions";
-                } else {
-                    endpoint += "/chat/completions";
+            // Determine correct endpoint based on provider
+            if (providerName != null && providerName.contains("Anthropic")) {
+                // Anthropic uses /v1/messages
+                if (!endpoint.endsWith("/messages")) {
+                    if (endpoint.endsWith("/")) {
+                        endpoint += "messages";
+                    } else {
+                        endpoint += "/messages";
+                    }
+                }
+            } else {
+                // OpenAI and compatible providers use /chat/completions
+                if (!endpoint.endsWith("/chat/completions")) {
+                    if (endpoint.endsWith("/")) {
+                        endpoint += "chat/completions";
+                    } else {
+                        endpoint += "/chat/completions";
+                    }
                 }
             }
         }
         this.apiEndpoint = endpoint;
-
-        // Load provider name from settings
-        String provider = api.persistence().preferences()
-                .getString("cookiedb.ai.provider");
-        this.providerName = provider != null ? provider : "OpenAI";
     }
 
     @Override
@@ -119,13 +131,21 @@ public class OpenAIProvider implements AIProvider {
                 .header("Content-Type", "application/json")
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                 .header("Accept", "application/json, */*")
-                .header("Accept-Encoding", "gzip, deflate")
+                // Don't request gzip - HttpClient with BodyHandlers.ofString() doesn't auto-decompress
+                // .header("Accept-Encoding", "gzip, deflate")
                 .timeout(Duration.ofSeconds(TIMEOUT_SECONDS))
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody));
 
-        // Only add Authorization header if API key is provided (not needed for local models)
+        // Add authentication headers based on provider
         if (apiKey != null && !apiKey.isEmpty()) {
-            requestBuilder.header("Authorization", "Bearer " + apiKey);
+            if (providerName != null && providerName.contains("Anthropic")) {
+                // Anthropic uses x-api-key header and requires anthropic-version
+                requestBuilder.header("x-api-key", apiKey);
+                requestBuilder.header("anthropic-version", "2023-06-01");
+            } else {
+                // OpenAI and compatible providers use Authorization: Bearer
+                requestBuilder.header("Authorization", "Bearer " + apiKey);
+            }
         }
 
         HttpRequest request = requestBuilder.build();
@@ -142,25 +162,46 @@ public class OpenAIProvider implements AIProvider {
     }
 
     private String buildRequestBody(String prompt) {
-        return String.format(
-            "{\n" +
-            "  \"model\": \"%s\",\n" +
-            "  \"messages\": [\n" +
-            "    {\n" +
-            "      \"role\": \"system\",\n" +
-            "      \"content\": \"You are a web cookie classification expert. Analyze cookies and return structured JSON data.\"\n" +
-            "    },\n" +
-            "    {\n" +
-            "      \"role\": \"user\",\n" +
-            "      \"content\": %s\n" +
-            "    }\n" +
-            "  ],\n" +
-            "  \"temperature\": 0.0,\n" +
-            "  \"max_tokens\": 500\n" +
-            "}",
-            model,
-            escapeJson(prompt)
-        );
+        if (providerName != null && providerName.contains("Anthropic")) {
+            // Anthropic Messages API format
+            return String.format(
+                "{\n" +
+                "  \"model\": \"%s\",\n" +
+                "  \"system\": \"You are a web cookie classification expert. Analyze cookies and return structured JSON data.\",\n" +
+                "  \"messages\": [\n" +
+                "    {\n" +
+                "      \"role\": \"user\",\n" +
+                "      \"content\": %s\n" +
+                "    }\n" +
+                "  ],\n" +
+                "  \"temperature\": 0.0,\n" +
+                "  \"max_tokens\": 1024\n" +
+                "}",
+                model,
+                escapeJson(prompt)
+            );
+        } else {
+            // OpenAI Chat Completions API format
+            return String.format(
+                "{\n" +
+                "  \"model\": \"%s\",\n" +
+                "  \"messages\": [\n" +
+                "    {\n" +
+                "      \"role\": \"system\",\n" +
+                "      \"content\": \"You are a web cookie classification expert. Analyze cookies and return structured JSON data.\"\n" +
+                "    },\n" +
+                "    {\n" +
+                "      \"role\": \"user\",\n" +
+                "      \"content\": %s\n" +
+                "    }\n" +
+                "  ],\n" +
+                "  \"temperature\": 0.0,\n" +
+                "  \"max_tokens\": 500\n" +
+                "}",
+                model,
+                escapeJson(prompt)
+            );
+        }
     }
 
     private String extractContentFromResponse(String responseBody) throws AIException {

@@ -538,6 +538,127 @@ public class CookieDatabaseManager {
     }
 
     /**
+     * Bulk import cookies from Open Cookie Database
+     * Replaces existing entries with matching names
+     */
+    public int importOpenCookieDatabase(List<CookieInfo> cookies) {
+        int imported = 0;
+        int updated = 0;
+        int skipped = 0;
+
+        for (CookieInfo cookie : cookies) {
+            try {
+                // Check if cookie already exists
+                Optional<CookieInfo> existing = getCookieInfoByNameOnly(cookie.getName());
+
+                if (existing.isPresent()) {
+                    // Only update if source is not "manual" (don't override user corrections)
+                    if (!"manual".equals(existing.get().getSource())) {
+                        storeCookieInfo(cookie);
+                        updated++;
+                    } else {
+                        skipped++;
+                    }
+                } else {
+                    // New cookie, store it
+                    storeCookieInfo(cookie);
+                    imported++;
+                }
+
+                // If cookie name contains wildcards, add pattern
+                if (cookie.getNotes() != null && cookie.getNotes().contains("Wildcard")) {
+                    addWildcardPattern(cookie.getName());
+                }
+
+            } catch (Exception e) {
+                api.logging().logToError("Failed to import cookie " +
+                    cookie.getName() + ": " + e.getMessage());
+            }
+        }
+
+        api.logging().logToOutput(String.format(
+            "[Open Cookie DB] Import complete: %d new, %d updated, %d skipped (manual)",
+            imported, updated, skipped));
+
+        return imported + updated;
+    }
+
+    /**
+     * Add wildcard pattern for a cookie name
+     * E.g., _ga -> _ga_*
+     */
+    private void addWildcardPattern(String cookieName) {
+        // Add wildcard pattern if not already present
+        String pattern = cookieName + "_*";
+        addCookiePattern(cookieName, pattern);
+    }
+
+    /**
+     * Match cookie name against patterns, including wildcards
+     * Returns the base cookie name if matched
+     */
+    public Optional<String> matchCookiePattern(String cookieName) {
+        // Direct match first
+        Optional<CookieInfo> direct = getCookieInfoByNameOnly(cookieName);
+        if (direct.isPresent()) {
+            return Optional.of(cookieName);
+        }
+
+        // Check wildcard patterns
+        // Common patterns: _ga_*, _gat_*, _gid_*, etc.
+        if (cookieName.startsWith("_ga_")) {
+            return Optional.of("_ga");
+        }
+        if (cookieName.startsWith("_gat_")) {
+            return Optional.of("_gat");
+        }
+        if (cookieName.startsWith("_gid_")) {
+            return Optional.of("_gid");
+        }
+
+        // Check database patterns
+        try {
+            String sql = "SELECT cookie_name FROM cookie_patterns";
+            try (Statement stmt = connection.createStatement();
+                 ResultSet rs = stmt.executeQuery(sql)) {
+
+                while (rs.next()) {
+                    String baseName = rs.getString("cookie_name");
+                    // Simple wildcard matching: baseName_*
+                    if (cookieName.startsWith(baseName + "_")) {
+                        return Optional.of(baseName);
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            api.logging().logToError("Error matching cookie pattern: " + e.getMessage());
+        }
+
+        return Optional.empty();
+    }
+
+    /**
+     * Get cookie info by name only (no domain check)
+     */
+    private Optional<CookieInfo> getCookieInfoByNameOnly(String name) {
+        String sql = "SELECT * FROM cookies WHERE name = ? LIMIT 1";
+
+        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setString(1, name);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(mapResultSetToCookieInfo(rs));
+                }
+            }
+        } catch (SQLException e) {
+            api.logging().logToError("Database query error: " + e.getMessage());
+        }
+
+        return Optional.empty();
+    }
+
+    /**
      * Close database connection
      */
     public void close() {

@@ -107,8 +107,18 @@ public class CookieDatabaseViewerPanel extends JPanel {
         // Create table
         cookieTable = new JTable(tableModel);
         cookieTable.setAutoCreateRowSorter(false); // We'll use custom sorter
-        cookieTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        cookieTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         cookieTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
+
+        // Add double-click listener to edit cookie
+        cookieTable.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() == 2) {
+                    editSelectedCookie();
+                }
+            }
+        });
 
         // Set column widths
         cookieTable.getColumnModel().getColumn(0).setPreferredWidth(150); // Name
@@ -118,18 +128,10 @@ public class CookieDatabaseViewerPanel extends JPanel {
         cookieTable.getColumnModel().getColumn(4).setPreferredWidth(100); // Privacy Impact
         cookieTable.getColumnModel().getColumn(5).setPreferredWidth(80);  // Third Party
         cookieTable.getColumnModel().getColumn(6).setPreferredWidth(120); // Expiration
-        cookieTable.getColumnModel().getColumn(7).setPreferredWidth(80);  // Confidence
-        cookieTable.getColumnModel().getColumn(8).setPreferredWidth(80);  // Source
 
         // Create and set row sorter
         rowSorter = new TableRowSorter<>(tableModel);
         cookieTable.setRowSorter(rowSorter);
-
-        // Set custom comparators for specific columns
-        rowSorter.setComparator(7, Comparator.comparingDouble(o -> {
-            if (o instanceof Double) return (Double) o;
-            return 0.0;
-        }));
 
         JScrollPane scrollPane = new JScrollPane(cookieTable);
         scrollPane.setBorder(BorderFactory.createTitledBorder("Cookie Database"));
@@ -210,8 +212,8 @@ public class CookieDatabaseViewerPanel extends JPanel {
     }
 
     private void editSelectedCookie() {
-        int selectedRow = cookieTable.getSelectedRow();
-        if (selectedRow < 0) {
+        int[] selectedRows = cookieTable.getSelectedRows();
+        if (selectedRows.length == 0) {
             JOptionPane.showMessageDialog(this,
                 "Please select a cookie to edit",
                 "No Selection",
@@ -219,8 +221,16 @@ public class CookieDatabaseViewerPanel extends JPanel {
             return;
         }
 
+        if (selectedRows.length > 1) {
+            JOptionPane.showMessageDialog(this,
+                "Please select only ONE cookie to edit",
+                "Multiple Selection",
+                JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
         // Convert view row to model row (important for filtering/sorting)
-        int modelRow = cookieTable.convertRowIndexToModel(selectedRow);
+        int modelRow = cookieTable.convertRowIndexToModel(selectedRows[0]);
         CookieInfo cookie = tableModel.getCookie(modelRow);
 
         // Show edit dialog
@@ -254,23 +264,34 @@ public class CookieDatabaseViewerPanel extends JPanel {
     }
 
     private void deleteSelectedCookie() {
-        int selectedRow = cookieTable.getSelectedRow();
-        if (selectedRow < 0) {
+        int[] selectedRows = cookieTable.getSelectedRows();
+        if (selectedRows.length == 0) {
             JOptionPane.showMessageDialog(this,
-                "Please select a cookie to delete",
+                "Please select one or more cookies to delete",
                 "No Selection",
                 JOptionPane.INFORMATION_MESSAGE);
             return;
         }
 
-        // Convert view row to model row
-        int modelRow = cookieTable.convertRowIndexToModel(selectedRow);
-        CookieInfo cookie = tableModel.getCookie(modelRow);
+        // Convert view rows to model rows and get cookie info
+        java.util.List<CookieInfo> cookiesToDelete = new java.util.ArrayList<>();
+        for (int selectedRow : selectedRows) {
+            int modelRow = cookieTable.convertRowIndexToModel(selectedRow);
+            cookiesToDelete.add(tableModel.getCookie(modelRow));
+        }
 
         // Confirm deletion
+        String message;
+        if (cookiesToDelete.size() == 1) {
+            message = "Are you sure you want to delete the cookie '" + cookiesToDelete.get(0).getName() + "'?\n" +
+                     "This action cannot be undone.";
+        } else {
+            message = "Are you sure you want to delete " + cookiesToDelete.size() + " cookies?\n" +
+                     "This action cannot be undone.";
+        }
+
         int confirm = JOptionPane.showConfirmDialog(this,
-            "Are you sure you want to delete the cookie '" + cookie.getName() + "'?\n" +
-            "This action cannot be undone.",
+            message,
             "Confirm Deletion",
             JOptionPane.YES_NO_OPTION,
             JOptionPane.WARNING_MESSAGE);
@@ -279,14 +300,16 @@ public class CookieDatabaseViewerPanel extends JPanel {
             SwingWorker<Void, Void> worker = new SwingWorker<>() {
                 @Override
                 protected Void doInBackground() {
-                    statusLabel.setText("Deleting cookie...");
-                    cookieService.deleteCookie(cookie.getName());
+                    statusLabel.setText("Deleting " + cookiesToDelete.size() + " cookie(s)...");
+                    for (CookieInfo cookie : cookiesToDelete) {
+                        cookieService.deleteCookie(cookie.getName());
+                    }
                     return null;
                 }
 
                 @Override
                 protected void done() {
-                    statusLabel.setText("Cookie deleted successfully");
+                    statusLabel.setText(cookiesToDelete.size() + " cookie(s) deleted successfully");
                     refreshData();
                 }
             };
@@ -300,7 +323,7 @@ public class CookieDatabaseViewerPanel extends JPanel {
     private static class CookieTableModel extends AbstractTableModel {
         private final String[] columnNames = {
             "Name", "Vendor", "Category", "Purpose", "Privacy Impact",
-            "Third Party", "Expiration", "Confidence", "Source"
+            "Third Party", "Expiration"
         };
 
         private List<CookieInfo> cookies = new ArrayList<>();
@@ -333,7 +356,6 @@ public class CookieDatabaseViewerPanel extends JPanel {
         public Class<?> getColumnClass(int columnIndex) {
             switch (columnIndex) {
                 case 5: return Boolean.class; // Third Party
-                case 7: return Double.class;  // Confidence
                 default: return String.class;
             }
         }
@@ -350,8 +372,6 @@ public class CookieDatabaseViewerPanel extends JPanel {
                 case 4: return cookie.getPrivacyImpact() != null ? cookie.getPrivacyImpact().name() : "";
                 case 5: return cookie.isThirdParty();
                 case 6: return cookie.getTypicalExpiration();
-                case 7: return cookie.getConfidenceScore();
-                case 8: return cookie.getSource();
                 default: return "";
             }
         }
